@@ -1,286 +1,248 @@
-import React, { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  Image,
+  SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
-  View,
   TouchableOpacity,
-  Image,
-  Alert,
-  ScrollView,
-  Platform,
+  View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
 
 export default function App() {
-  const [image, setImage] = useState(null);
-  const [hasPermission, setHasPermission] = useState(null);
+  const cameraRef = useRef(null);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [mediaPermission, requestMediaPermission] = MediaLibrary.usePermissions();
+  const [capturedUri, setCapturedUri] = useState(null);
+  const [pickedUri, setPickedUri] = useState(null);
+  const [galleryAssets, setGalleryAssets] = useState([]);
+  const [statusMessage, setStatusMessage] = useState('Ready to go!');
 
-  // Request permissions on mount
-  React.useEffect(() => {
+  useEffect(() => {
     (async () => {
-      const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
-      const mediaLibraryStatus = await MediaLibrary.requestPermissionsAsync();
-      setHasPermission(
-        cameraStatus.status === 'granted' && mediaLibraryStatus.status === 'granted'
-      );
+      if (!cameraPermission) {
+        await requestCameraPermission();
+      }
+      if (!mediaPermission) {
+        await requestMediaPermission();
+      }
     })();
   }, []);
 
-  const takePhoto = async () => {
-    try {
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 1,
-      });
+  useEffect(() => {
+    if (mediaPermission?.granted) {
+      refreshGallery();
+    }
+  }, [mediaPermission]);
 
-      if (!result.canceled) {
-        setImage(result.assets[0].uri);
-        Alert.alert('Success', 'Photo captured successfully!');
-      }
+  const refreshGallery = async () => {
+    try {
+      const assets = await MediaLibrary.getAssetsAsync({
+        first: 12,
+        mediaType: ['photo'],
+        sortBy: [[MediaLibrary.SortBy.creationTime, false]],
+      });
+      setGalleryAssets(assets.assets);
     } catch (error) {
-      Alert.alert('Error', 'Failed to take photo: ' + error.message);
+      setStatusMessage('Could not load gallery items.');
     }
   };
 
-  const pickImageFromGallery = async () => {
+  const ensurePermissions = async () => {
+    const camera = await requestCameraPermission();
+    const media = await requestMediaPermission();
+    if (!camera.granted || !media.granted) {
+      setStatusMessage('Camera and gallery permissions are required.');
+    } else {
+      setStatusMessage('Permissions granted, you can take photos.');
+      refreshGallery();
+    }
+  };
+
+  const handleTakePhoto = async () => {
+    if (!cameraRef.current) return;
+    try {
+      const photo = await cameraRef.current.takePictureAsync();
+      setCapturedUri(photo.uri);
+      await MediaLibrary.saveToLibraryAsync(photo.uri);
+      setStatusMessage('Photo saved to your gallery.');
+      refreshGallery();
+    } catch (error) {
+      setStatusMessage('Something went wrong when taking the photo.');
+    }
+  };
+
+  const handlePickFromGallery = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
+        allowsMultipleSelection: false,
         quality: 1,
       });
-
       if (!result.canceled) {
-        setImage(result.assets[0].uri);
-        Alert.alert('Success', 'Image selected from gallery!');
+        setPickedUri(result.assets[0].uri);
+        setStatusMessage('Image loaded from your gallery.');
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to pick image: ' + error.message);
+      setStatusMessage('Could not open the gallery.');
     }
   };
 
-  const saveToGallery = async () => {
-    if (!image) {
-      Alert.alert('No Image', 'Please take a photo or select one from gallery first.');
-      return;
-    }
-
-    try {
-      const asset = await MediaLibrary.createAssetAsync(image);
-      await MediaLibrary.createAlbumAsync('Camera Gallery App', asset, false);
-      Alert.alert('Success', 'Image saved to gallery successfully!');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to save image: ' + error.message);
-    }
-  };
-
-  if (hasPermission === null) {
+  if (!cameraPermission || !mediaPermission) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.message}>Requesting permissions...</Text>
-      </View>
+      <SafeAreaView style={styles.centeredScreen}>
+        <Text style={styles.label}>Requesting permissions...</Text>
+      </SafeAreaView>
     );
   }
 
-  if (hasPermission === false) {
+  if (!cameraPermission.granted || !mediaPermission.granted) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.message}>
-          Camera and Media Library permissions are required to use this app.
-        </Text>
-        <Text style={styles.subMessage}>
-          Please enable permissions in your device settings.
-        </Text>
-      </View>
+      <SafeAreaView style={styles.centeredScreen}>
+        <Text style={styles.label}>We need camera and gallery access.</Text>
+        <TouchableOpacity style={styles.primaryButton} onPress={ensurePermissions}>
+          <Text style={styles.buttonText}>Allow Access</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
-      
-      <View style={styles.header}>
-        <Text style={styles.title}>📷 Camera Gallery App</Text>
-        <Text style={styles.subtitle}>Capture, Browse & Save Photos</Text>
-      </View>
+      <ScrollView contentContainerStyle={styles.scroll}>
+        <Text style={styles.title}>Simple Camera Practice</Text>
+        <Text style={styles.subtitle}>{statusMessage}</Text>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.imageContainer}>
-          {image ? (
-            <Image source={{ uri: image }} style={styles.image} />
-          ) : (
-            <View style={styles.placeholderContainer}>
-              <Text style={styles.placeholderIcon}>📸</Text>
-              <Text style={styles.placeholderText}>No image selected</Text>
-              <Text style={styles.placeholderSubtext}>
-                Take a photo or choose from gallery
-              </Text>
+        <View style={styles.cameraBox}>
+          <CameraView ref={cameraRef} style={styles.cameraPreview} />
+        </View>
+        <TouchableOpacity style={styles.primaryButton} onPress={handleTakePhoto}>
+          <Text style={styles.buttonText}>Take Photo & Save</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.secondaryButton} onPress={handlePickFromGallery}>
+          <Text style={styles.secondaryText}>Open Gallery Picker</Text>
+        </TouchableOpacity>
+
+        <View style={styles.previewRow}>
+          {capturedUri && (
+            <View style={styles.previewBox}>
+              <Text style={styles.label}>Last Captured</Text>
+              <Image source={{ uri: capturedUri }} style={styles.previewImage} />
+            </View>
+          )}
+          {pickedUri && (
+            <View style={styles.previewBox}>
+              <Text style={styles.label}>Picked From Gallery</Text>
+              <Image source={{ uri: pickedUri }} style={styles.previewImage} />
             </View>
           )}
         </View>
 
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.button} onPress={takePhoto}>
-            <Text style={styles.buttonIcon}>📷</Text>
-            <Text style={styles.buttonText}>Take Photo</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.button, styles.buttonSecondary]}
-            onPress={pickImageFromGallery}
-          >
-            <Text style={styles.buttonIcon}>🖼️</Text>
-            <Text style={styles.buttonText}>Choose from Gallery</Text>
-          </TouchableOpacity>
-
-          {image && (
-            <TouchableOpacity
-              style={[styles.button, styles.buttonSuccess]}
-              onPress={saveToGallery}
-            >
-              <Text style={styles.buttonIcon}>💾</Text>
-              <Text style={styles.buttonText}>Save to Gallery</Text>
-            </TouchableOpacity>
+        <Text style={styles.label}>Recent Gallery Photos</Text>
+        <View style={styles.galleryGrid}>
+          {galleryAssets.map((asset) => (
+            <Image key={asset.id} source={{ uri: asset.uri }} style={styles.galleryImage} />
+          ))}
+          {galleryAssets.length === 0 && (
+            <Text style={styles.emptyText}>Take a photo to see it here.</Text>
           )}
         </View>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#0b1b2b',
   },
-  header: {
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-    paddingBottom: 20,
-    paddingHorizontal: 20,
-    backgroundColor: '#16213e',
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 4.65,
-    elevation: 8,
+  centeredScreen: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0b1b2b',
+    padding: 24,
+  },
+  scroll: {
+    padding: 24,
+    gap: 16,
   },
   title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
-    marginBottom: 8,
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#ffffff',
   },
   subtitle: {
-    fontSize: 16,
-    color: '#94a3b8',
-    textAlign: 'center',
+    color: '#c7d7ed',
   },
-  scrollContent: {
-    flexGrow: 1,
-    padding: 20,
-  },
-  imageContainer: {
-    width: '100%',
-    height: 400,
-    borderRadius: 20,
-    backgroundColor: '#0f3460',
-    marginBottom: 30,
+  cameraBox: {
+    borderRadius: 12,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    height: 320,
+    backgroundColor: '#111927',
   },
-  image: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  placeholderContainer: {
+  cameraPreview: {
     flex: 1,
-    justifyContent: 'center',
+  },
+  primaryButton: {
+    backgroundColor: '#4c8bf5',
+    paddingVertical: 14,
+    borderRadius: 10,
     alignItems: 'center',
-    padding: 20,
-  },
-  placeholderIcon: {
-    fontSize: 80,
-    marginBottom: 20,
-  },
-  placeholderText: {
-    fontSize: 20,
-    color: '#fff',
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  placeholderSubtext: {
-    fontSize: 14,
-    color: '#94a3b8',
-    textAlign: 'center',
-  },
-  buttonContainer: {
-    width: '100%',
-  },
-  button: {
-    backgroundColor: '#e94560',
-    paddingVertical: 18,
-    paddingHorizontal: 30,
-    borderRadius: 15,
-    marginBottom: 15,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#e94560',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 4.65,
-    elevation: 8,
-  },
-  buttonSecondary: {
-    backgroundColor: '#533483',
-    shadowColor: '#533483',
-  },
-  buttonSuccess: {
-    backgroundColor: '#06a77d',
-    shadowColor: '#06a77d',
-  },
-  buttonIcon: {
-    fontSize: 24,
-    marginRight: 12,
   },
   buttonText: {
     color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '600',
   },
-  message: {
-    fontSize: 18,
-    color: '#fff',
-    textAlign: 'center',
-    paddingHorizontal: 30,
+  secondaryButton: {
+    borderWidth: 1,
+    borderColor: '#4c8bf5',
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
   },
-  subMessage: {
-    fontSize: 14,
-    color: '#94a3b8',
-    textAlign: 'center',
-    marginTop: 10,
-    paddingHorizontal: 30,
+  secondaryText: {
+    color: '#4c8bf5',
+    fontWeight: '600',
+  },
+  previewRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  previewBox: {
+    flex: 1,
+    backgroundColor: '#111927',
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+  },
+  previewImage: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+    borderRadius: 10,
+  },
+  label: {
+    color: '#c7d7ed',
+    fontWeight: '600',
+  },
+  galleryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  galleryImage: {
+    width: '30%',
+    aspectRatio: 1,
+    borderRadius: 8,
+  },
+  emptyText: {
+    color: '#8aa0c7',
   },
 });
